@@ -31,7 +31,7 @@ class InsightEngineService:
         self.lookback_hours = int(ec.get("lookback_hours", 72))
         self.min_insight_score = int(ec.get("min_insight_score", 80))
         self.run_interval_hours = int(ec.get("run_interval_hours", 6))
-
+        self.quiet_hours = str(ec.get("quiet_hours", "23:00-09:00"))
         db_cfg = self.cfg.get("databases", {})
         self.storage = InsightStorage(db_path=db_cfg.get("insight_db", "data/insights.db"))
         self.knowledge_hub = KnowledgeHub(db_cfg)
@@ -63,30 +63,43 @@ class InsightEngineService:
 
         active_p = self.insight_agent.active_provider
         p_name = self.cfg.get("llm", {}).get("providers", {}).get(active_p, {}).get("name", active_p)
+        days = self.lookback_hours // 24
 
         details = f"<b>聚合信源</b>: 邮件论文 + 微信随手记 + 知乎动态<br/>" \
+                  f"<b>回溯范围</b>: 最近 {days} 天 ({self.lookback_hours} 小时)<br/>" \
+                  f"<b>免打扰时段</b>: {self.quiet_hours} (夜间静默不打扰)<br/>" \
                   f"<b>思考周期</b>: 每 {self.run_interval_hours} 小时全源提炼一次<br/>" \
-                  f"<b>推送门槛</b>: ≥ {self.min_insight_score} 分 (顶级 Insight 才会推送，宁缺毋滥)<br/>" \
-                  f"<b>大模型通道</b>: {p_name} (主备容灾已就绪)<br/>" \
-                  f"<div class=\"highlight\">💡 <b>微信快捷指令</b>:<br/>" \
-                  f"• <code>/insight</code> : 立即触发跨源思考与提炼<br/>" \
-                  f"• <code>/llm secondary</code> : 快速切换大模型通道<br/>" \
+                  f"<b>推送门槛</b>: ≥ {self.min_insight_score} 分 (顶级见解才推送)<br/>" \
+                  f"<b>大模型通道</b>: {p_name}<br/>" \
+                  f"<div class=\"highlight\">💡 <b>微信快捷指令支持</b>:<br/>" \
+                  f"• <code>/insight</code> : 立即触发全源思考与提炼<br/>" \
+                  f"• <code>/status</code> : 查看全系统健康状态看板<br/>" \
+                  f"• <code>/quiet 23:00-09:00</code> : 设置夜间免打扰时段<br/>" \
+                  f"• <code>/days 3</code> : 修改跨源回溯天数<br/>" \
+                  f"• <code>/interval 6</code> : 修改思考聚合周期(小时)<br/>" \
+                  f"• <code>/llm secondary</code> : 一键切换备用大模型<br/>" \
                   f"• <code>/cookie &lt;新Cookie&gt;</code> : 微信热更新知乎凭据<br/>" \
-                  f"• <code>/status</code> : 查看全系统健康状态</div>"
+                  f"• <code>/help</code> : 查看完整指令手册</div>"
 
         md_content = f"""### 💡 InsightEngine 洞察提炼引擎已就绪！
 **状态**: 🟢 正常守护运行中 (宁缺毋滥，直击本质)
 **聚合信源**: 📚 邮件学术论文 + 📝 微信长文随手记 + 💬 知乎前沿讨论
-**思考周期**: 每 **{self.run_interval_hours}** 小时深度碰撞提炼一次
-**推送门槛**: 🔥 评分 ≥ **{self.min_insight_score}** 分 (唯有穿透本质的真见解才推送，绝不打扰)
+**回溯范围**: 最近 **{days}** 天 ({self.lookback_hours} 小时)
+**免打扰时段**: `{self.quiet_hours}` (夜间静默不推送)
+**思考周期**: 每 **{self.run_interval_hours}** 小时全源深度碰撞一次
+**推送门槛**: 🔥 评分 ≥ **{self.min_insight_score}** 分 (唯有穿透本质的真见解才打扰)
 **大模型通道**: `{active_p}` ({p_name})
 
-> 💡 **微信交互指令支持**：在此对话框发送以下命令可实时控制：
+> 💡 **微信快捷指令支持**：在此对话框回复以下命令可实时调参：
 > - `/insight` 或 `提炼`：立即执行全源渐进思考
-> - `/status` 或 `状态`：检查三大信源库与大模型状态
+> - `/status` 或 `状态`：检查三大信源库与各参数状态
+> - `/quiet 23:00-09:00`：设置夜间免打扰休眠时段
+> - `/quiet off`：关闭免打扰时段
+> - `/days <天数>`：动态调整跨源回溯天数 (如 `/days 3`)
+> - `/interval <小时>`：动态调整思考周期 (如 `/interval 6`)
 > - `/llm secondary`：大模型故障时一键切换备用通道
-> - `/cookie <新Cookie>`：知乎失效时免登服务器直接热更新！
-> - `/help`：获取完整指令菜单"""
+> - `/cookie <新Cookie>`：知乎失效时免登服务器直接热替换！
+> - `/help`：获取完整指令手册"""
 
         self.notifier.send_dual_notification(
             title=title,
@@ -114,12 +127,15 @@ class InsightEngineService:
                 logger.debug(f"[InsightEngine] 类似命题已归档推送过，跳过: {ins.title}")
                 continue
 
-            # 微信推送 (双通道)
-            logger.info(f"[InsightEngine] 发现突破性 Insight [{ins.insight_type}] ({ins.depth_score}分): {ins.title}")
-            ok = self.notifier.send_insight_notification(ins)
-            if ok:
-                sent_count += 1
-
+            # 检查是否处于免打扰时段
+            from .command_receiver import is_in_quiet_hours
+            if is_in_quiet_hours(self.quiet_hours):
+                logger.info(f"[InsightEngine] 当前处于夜间免打扰时段 ({self.quiet_hours})，静默归档不发微信推送: {ins.title}")
+            else:
+                logger.info(f"[InsightEngine] 发现突破性 Insight [{ins.insight_type}] ({ins.depth_score}分): {ins.title}")
+                ok = self.notifier.send_insight_notification(ins)
+                if ok:
+                    sent_count += 1
             # 归档到 SQLite
             self.storage.record_insight(ins)
 

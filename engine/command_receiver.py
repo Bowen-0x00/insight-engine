@@ -5,7 +5,29 @@ import re
 import yaml
 import requests
 from typing import Dict, Any, Optional
+from datetime import datetime, time
 from loguru import logger
+
+
+def is_in_quiet_hours(quiet_str: str, now: Optional[datetime] = None) -> bool:
+    if not quiet_str or quiet_str.lower() in ("off", "none", "false", "0", "关闭"):
+        return False
+    try:
+        parts = quiet_str.strip().split("-")
+        if len(parts) != 2:
+            return False
+        sh, sm = map(int, parts[0].strip().split(":"))
+        eh, em = map(int, parts[1].strip().split(":"))
+        start_t = time(sh, sm)
+        end_t = time(eh, em)
+        cur_t = (now or datetime.now()).time()
+
+        if start_t <= end_t:
+            return start_t <= cur_t < end_t
+        else:
+            return cur_t >= start_t or cur_t < end_t
+    except Exception:
+        return False
 
 
 class CommandReceiver:
@@ -30,8 +52,24 @@ class CommandReceiver:
         # 3. 即刻触发跨源渐进思考与 Insight 提炼
         if cmd.lower() in ("/insight", "insight", "/run", "run", "提炼", "思考"):
             return self._cmd_trigger_insight()
+        # 4. 免打扰休眠设置: /quiet 23:00-09:00 或 /quiet off 或 休眠 23:00-09:00
+        m_quiet = re.match(r'^(?:/quiet|quiet|/sleep|sleep|休眠)\s*(.+)$', cmd, re.IGNORECASE)
+        if m_quiet:
+            return self._cmd_set_quiet_hours(m_quiet.group(1).strip())
 
-        # 4. 切换大模型通道: /llm primary 或 /llm secondary
+        # 5. 回溯天数设置: /days 3 或 范围 3
+        m_days = re.match(r'^(?:/days|days|范围)\s*(\d+)$', cmd, re.IGNORECASE)
+        if m_days:
+            days = int(m_days.group(1))
+            return self._cmd_set_days(days)
+
+        # 6. 思考频率设置: /interval 6 或 频率 6 (小时)
+        m_interval = re.match(r'^(?:/interval|interval|频率)\s*(\d+)$', cmd, re.IGNORECASE)
+        if m_interval:
+            hours = int(m_interval.group(1))
+            return self._cmd_set_interval(hours)
+
+        # 7. 切换大模型通道: /llm primary 或 /llm secondary
         m_llm = re.match(r'^(?:/llm|llm|切换模型)\s*(\w+)$', cmd, re.IGNORECASE)
         if m_llm:
             provider = m_llm.group(1).lower()
@@ -68,20 +106,26 @@ class CommandReceiver:
         return """🧠 **InsightEngine 交互控制手册**
 ━━━━━━━━━━━━━━━━━━
 🔹 **核心触发**:
-- `/insight` 或 `提炼`: 立即触发一次全源渐进思考与洞察提炼
-- `/status` 或 `状态`: 检查三大信源库、LLM 通道与运行状态
+• `/insight` 或 `提炼`: 立即触发全源深度碰撞与洞察提炼
+• `/status` 或 `状态`: 检查三大信源库、免打扰与各参数
+
+🔹 **免打扰休眠设置 (夜间不打扰)**:
+• `/quiet 23:00-09:00`: 设置夜间休眠时段 (在此期间静默不推送)
+• `/quiet off`: 关闭免打扰，全天候实时推送
+
+🔹 **回溯范围与思考频率调参**:
+• `/days <天数>`: 设置跨源回溯范围 (如 `/days 3` 或 `/days 7`)
+• `/interval <小时>`: 设置思考聚合频率 (如 `/interval 6` 或 `/interval 12`)
+• `/score <分数>`: 调整洞察推送门槛 (默认 80 分，宁缺毋滥)
 
 🔹 **大模型容灾与热切换 (解决 API 失效)**:
-- `/llm primary`: 切换为默认主通道 (如 Gemini-3.8-Flash)
-- `/llm secondary`: 切换为备用容灾通道 (如 DeepSeek-V3)
-- `/setkey <Key>`: 动态热更新当前生效通道的 API Key
-- `/testllm`: 实时测试大模型连通性与响应速度
+• `/llm primary`: 切换为默认主通道 (如 Gemini-3.8-Flash)
+• `/llm secondary`: 切换为备用容灾通道 (如 DeepSeek-V3)
+• `/setkey <Key>`: 动态热更新当前生效通道的 API Key
+• `/testllm`: 实时测试大模型连通性与响应速度
 
 🔹 **知乎爬虫容错与更新 (解决 Cookie 失效)**:
-- `/cookie <完整Cookie>`: 免登服务器，直接在微信对话框中热更新知乎 Cookie 并测试生效！
-
-🔹 **参数调整**:
-- `/score <分数>`: 调整洞察推送门槛 (默认 80 分，宁缺毋滥)"""
+• `/cookie <完整Cookie>`: 免登服务器，直接在微信对话框中热更新知乎 Cookie 并测试生效！"""
 
     def _cmd_status(self) -> str:
         cfg = self.service.cfg
@@ -89,24 +133,64 @@ class CommandReceiver:
         active_p = self.service.insight_agent.active_provider
         p_info = llm_cfg.get("providers", {}).get(active_p, {})
 
-        # 检查三大数据库
-        db_cfg = cfg.get("databases", {})
-        mail_exist = os.path.exists(db_cfg.get("mail_db", ""))
-        obs_exist = os.path.exists(db_cfg.get("obsidian_db", ""))
-        soc_exist = os.path.exists(db_cfg.get("social_db", ""))
+        quiet_h = getattr(self.service, "quiet_hours", "23:00-09:00")
+        quiet_desc = "休眠静默中 🌙" if is_in_quiet_hours(quiet_h) else "活跃思考中 🟢"
+        days = self.service.lookback_hours // 24
 
-        return f"""📊 **InsightEngine 系统健康与配置状态**
+        # 检查三大数据库
+        mail_exist = os.path.exists(self.service.knowledge_hub.mail_db)
+        obs_exist = os.path.exists(self.service.knowledge_hub.obsidian_db)
+        soc_exist = os.path.exists(self.service.knowledge_hub.social_db)
+
+        return f"""📊 **InsightEngine 系统健康与配置看板**
 ━━━━━━━━━━━━━━━━━━
-🟢 **服务状态**: 守护运行中 (每 {cfg['engine']['run_interval_hours']} 小时深度思考)
+🟢 **服务状态**: 守护运行中
+🌙 **免打扰时段**: `{quiet_h}` ({quiet_desc})
+📅 **跨源回溯范围**: 最近 **{days}** 天 ({self.service.lookback_hours} 小时)
+⏰ **思考沉淀周期**: 每 **{self.service.run_interval_hours}** 小时全源提炼一次
+🔥 **洞察推送门槛**: ≥ {self.service.min_insight_score} 分 (低于此分绝对静默)
 🤖 **当前大模型**: `{active_p}` ({p_info.get('name', '未配置')})
-🔥 **推送门槛**: ≥ {self.service.min_insight_score} 分 (低于此分绝对不打扰)
 
 📚 **三大信源数据库联通情况**:
-- 邮件学术库 (mail_db): {'✅ 已就绪' if mail_exist else '⚠️ 未找到文件'}
-- 微信随手记 (obsidian_db): {'✅ 已就绪' if obs_exist else '⚠️ 未找到文件'}
-- 社交雷达库 (social_db): {'✅ 已就绪' if soc_exist else '⚠️ 未找到文件'}
+- 邮件学术库: {'✅ 正常连接' if mail_exist else '⚠️ 未找到文件'}
+- 微信随手记: {'✅ 正常连接' if obs_exist else '⚠️ 未找到文件'}
+- 社交雷达库: {'✅ 正常连接' if soc_exist else '⚠️ 未找到文件'}
 
 💡 若大模型异常可发 `/llm secondary` 切换通道；若知乎失效可发 `/cookie <新Cookie>` 热替换！"""
+
+    def _cmd_set_quiet_hours(self, val: str) -> str:
+        clean_val = val.strip()
+        if clean_val.lower() in ("off", "none", "false", "0", "关闭"):
+            self.service.quiet_hours = "off"
+            self.service.cfg.setdefault("engine", {})["quiet_hours"] = "off"
+            self._save_yaml("config/config.yaml", self.service.cfg)
+            return "✅ **免打扰休眠已关闭**\n\n系统将恢复全天候 24 小时即时推送。"
+
+        if not re.match(r'^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$', clean_val):
+            return "⚠️ 格式不正确！请使用 `HH:MM-HH:MM` 格式，如 `/quiet 23:00-09:00`，或发送 `/quiet off` 关闭。"
+
+        clean_val = re.sub(r'\s+', '', clean_val)
+        self.service.quiet_hours = clean_val
+        self.service.cfg.setdefault("engine", {})["quiet_hours"] = clean_val
+        self._save_yaml("config/config.yaml", self.service.cfg)
+        return f"🌙 **夜间免打扰休眠时段已生效！**\n\n时段: **{clean_val}**\n在该时段内系统静默沉淀，绝不打扰您的休息。"
+
+    def _cmd_set_days(self, days: int) -> str:
+        if days <= 0:
+            return "⚠️ 回溯天数必须大于 0 天。"
+        hours = days * 24
+        self.service.lookback_hours = hours
+        self.service.cfg.setdefault("engine", {})["lookback_hours"] = hours
+        self._save_yaml("config/config.yaml", self.service.cfg)
+        return f"✅ **跨源回溯范围已修改**\n\n新范围: 最近 **{days}** 天 ({hours} 小时) 的增量素材 (已持久化保存)。"
+
+    def _cmd_set_interval(self, hours: int) -> str:
+        if hours < 1:
+            return "⚠️ 思考周期不能小于 1 小时，以留出充分的知识发酵与沉淀时间。"
+        self.service.run_interval_hours = hours
+        self.service.cfg.setdefault("engine", {})["run_interval_hours"] = hours
+        self._save_yaml("config/config.yaml", self.service.cfg)
+        return f"✅ **思考聚合周期已修改**\n\n新周期: 每 **{hours}** 小时执行一次全源碰撞提炼 (已持久化保存)。"
 
     def _cmd_trigger_insight(self) -> str:
         import threading

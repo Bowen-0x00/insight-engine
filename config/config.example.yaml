@@ -38,7 +38,8 @@ databases:
 
 # 4. 洞察提炼调度与门槛参数
 engine:
-  lookback_hours: 72                       # 提取过去 N 小时内的跨源增量知识进行深度研读
+  quiet_hours: "23:00-09:00"              # 夜间免打扰休眠时段 (在此期间静默不推送，支持 /quiet 指令热调整)
+  lookback_hours: 72                       # 提取过去 N 小时内的跨源增量知识进行深度研读 (支持 /days 指令热调整)
   min_insight_score: 80                    # 极高门槛推送阈值 (0-100分，低于 80 分绝对不推送，宁缺毋滥)
-  run_interval_hours: 6                    # 定时聚合渐进思考周期 (默认每 6 小时一次，亦可随时微信发送 /insight 触发)
+  run_interval_hours: 6                    # 定时聚合渐进思考周期 (默认每 6 小时一次，支持 /interval 指令热调整)
   auto_notify_threshold: true              # 仅当提炼出真正深刻的 Insight 时才微信推送
