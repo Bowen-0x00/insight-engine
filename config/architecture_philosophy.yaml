@@ -1,0 +1,84 @@
+# 计算机体系结构与硬件系统核心研究心法与自检清单 (Architecture Philosophy)
+
+# ==============================================================================
+# 一、 核心心法：课题本体 vs. 载体 (Research Essence vs. Vehicle)
+# ==============================================================================
+essence_vs_vehicle:
+  core_maxim: "AXI 和 CHI 只是‘苹果’，而你需要研究的是‘万有引力’。"
+  levels_of_abstraction:
+    level_1_specific: "被协议绑架（纯特定工程）：修改 AXI/CHI 某个特定字段、修补某个公司的 PDF 手册。协议一变，研究即废。"
+    level_2_category: "协议类别抽象（良好工程科学）：提炼为‘基于请求-响应模型的片上一致性总线’，发现控制流状态机跳转的可预测性，将具体协议作为测试台。"
+    level_3_fundamental: "触及底层本质规律（顶级系统研究）：研究‘分布式空间架构中，元数据(Control)与有效载荷(Data)之间的互信息规律’，揭示信息传输本质。"
+  storytelling_rule:
+    - "在介绍核心贡献时，绝口不提特定商业协议，使用抽象概念（如‘分布式通信元数据’与数学模型）。"
+    - "把压缩/调度算法定义为普适抽象模型，证明其适用于任何具有特定局部性的数据流。"
+    - "在 Evaluation 评估阶段才把具体工业标准作为落地测试用例（Case Study），证明理论在工业界代表性标准中有效。"
+
+# ==============================================================================
+# 二、 自证清白的三大黄金法则 (Defeating the Simulation Crisis)
+# ==============================================================================
+validation_rules:
+  first_principles_budgeting:
+    concept: "用‘第一性原理计算（Analytical Modeling）’框住底线。"
+    practice: "在写复杂模拟之前先算一笔物理账。例如做 2000 个 entry 的重排窗口，物理上只需 16KB SRAM，面积小于 0.01mm²，功耗微乎其微。证明其必然具备工程可行性。"
+  black_box_vs_white_box:
+    black_box: "对已知的现成技术用‘黑盒’（如 CXL 缺页中断延迟、PCIe 传输包固定开销、DRAM 激活纳秒数，直接查规范用参数赋值）。"
+    white_box: "对核心创新用‘白盒’（Cycle-accurate 精准扣流水线时钟周期，将硬件重排引入的延迟开销算进去，证明扣除开销后仍有净增益）。"
+  embrace_worst_case:
+    concept: "寻找并坦诚拥抱‘最坏情况（Worst-case Scenario）’。"
+    practice: "专为稀疏访存设计的架构，必须测密集连续访问。哪怕密集场景因流水线开销慢了 2%，也要大方写明，并用编译器旁路机制化解，展现极高严谨性。"
+
+# ==============================================================================
+# 三、 破局点：现代体系结构三大经典假设的崩溃
+# ==============================================================================
+collapsing_assumptions:
+  assumption_1:
+    old: "算法图（DAG）是静态且规则的实心网格 (Loomis-Whitney 立方体)。"
+    new_frontier: "算子全面走向动态、不规则与数据依赖 (Data-Dependent)。如 MoE 的动态条件流时空嵌入、2:4 结构化稀疏在加法树上的空泡消除。"
+  assumption_2:
+    old: "存储结构是理想的双层模型 (小而快的 SRAM + 大而慢的 DRAM)。"
+    new_frontier: "2.5D/3D 复杂树状异构网格 (RF -> L1 -> 片内L2 -> 3D Cache -> HBM3e/4 -> CXL/DRAM)。推导多层非线性通信下界，解决 3D-IC 热-带宽死循环。"
+  assumption_3:
+    old: "物理载体是单一平面的二维硅片。"
+    new_frontier: "集群升维成‘Data Center as a Chip’，空间坐标扩展为五维拓扑向量，集合通信 (All-to-All, All-Reduce) 与计算循环代数融合。"
+
+# ==============================================================================
+# 四、 算力对冲带宽范式 (Computation-for-Bandwidth)
+# ==============================================================================
+computation_for_bandwidth:
+  paradigm: "别在带宽死墙上撞死，把压力转给片上转换，用仅 2% 面积的 ASIC 解码电路秒级重构降维打击。"
+  hardware_friendly_encoding: "无损/轻量压缩评判标准不再是纯数学压缩比（如复杂的哈夫曼），而是‘ASIC 转换电路的门电路深度与面积开销’（如易于硬件秒级解包的一元编码）。"
+
+# ==============================================================================
+# 五、 软硬件底层设计对照 (Deep Architectural Realities)
+# ==============================================================================
+deep_insights:
+  straight_line_code: "IEEE 754 基础数学库在 GPU/现代核心中绝无动态 while 循环（避免 Warp Divergence），全是离线数学证明后固定步数展开的直线代码（牛顿迭代 2-3 步压进 0.5 ULP；超越函数用 Remez 算法离线求解 Minimax 7 阶多项式）。"
+  gpu_coalescing_spatial: "GPU 的不同 Warp 之间异步轮换掩盖 400 周期延迟；同一个 Warp 内 32 线程同一周期拍出 32 地址，在硬件合并单元里是‘纯空间维度的组合逻辑在单周期内瞬间判断’，时间被凝固。"
+  physical_power_walls: "超压超频的四大死线：功耗墙 (P∝V²f)、热失控、电子迁移、栅极击穿。"
+
+# ==============================================================================
+# 六、 系统性能优化与架构设计自检清单 (Design Checklist: 三大战役，六大策略)
+# ==============================================================================
+design_checklist:
+  campaign_1_spatiotemporal:
+    title: "战役一：对抗时空物理限制（单体优化）"
+    strategies:
+      - name: "时间与依赖转移 (Time & Dependency Shifting)"
+        ideas: "推测执行与验证 (Speculative Decoding, Function Call); 硬件预取 (Prefetching)"
+      - name: "层级与局部性 (Hierarchy & Locality)"
+        ideas: "中间缓存层 (Tiering / SRAM); 快慢路径分离 (Fast/Slow Path)"
+  campaign_2_scale_interconnect:
+    title: "战役二：对抗规模与互连限制（系统扩展）"
+    strategies:
+      - name: "粒度与拓扑 (Granularity & Topology)"
+        ideas: "合并与批处理 (Coalescing / Continuous Batching); 解耦与稀疏化 (Decoupling / MoE)"
+      - name: "带宽与延迟的博弈 (Bandwidth & Latency Trade-offs)"
+        ideas: "用带宽换延迟 (Burst Fill, 冗余超发); 用延迟换带宽 (Buffer 蓄水池拼大包, 聚合重排)"
+  campaign_3_data_protocols:
+    title: "战役三：对抗数据与协议限制（信息升维）"
+    strategies:
+      - name: "信息与精度的权衡 (Information Trade-offs)"
+        ideas: "近似与极限压缩 (Quantization, FP4/NVFP4, 稀疏微缩放)"
+      - name: "抽象与控制转移 (Abstraction & Control Shifting)"
+        ideas: "声明式/生成式通信 (传递高维意图 Token, 内存端自动展开 Gather/Scatter)"

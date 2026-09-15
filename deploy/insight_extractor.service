@@ -1,0 +1,15 @@
+[Unit]
+Description=InsightEngine - AI Cross-Channel Progressive Insight Extractor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/insight_extractor
+ExecStart=/root/mail_assist/venv/bin/python run.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

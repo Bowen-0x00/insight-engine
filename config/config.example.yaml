@@ -1,0 +1,44 @@
+# InsightEngine 配置文件模板 (请复制为 config/config.yaml 并填入真实凭据)
+
+# 1. 企业微信通知配置 (自建应用 1000005)
+wechat:
+  corp_id: "YOUR_CORP_ID"
+  agent_id: 1000005
+  corp_secret: "YOUR_CORP_SECRET"
+  token: "YOUR_TOKEN"
+  encoding_aes_key: "YOUR_ENCODING_AES_KEY"
+  to_user: "@all"
+
+# 2. 多大模型主备容灾配置 (支持失败自动降级与微信指令热切换)
+llm:
+  active_provider: "primary"               # 当前生效的通道: "primary" 或 "secondary"
+  providers:
+    primary:
+      name: "Primary-LLM"
+      base_url: "https://api.deepseek.com/v1"
+      api_key: "YOUR_PRIMARY_API_KEY"
+      model: "deepseek-chat"
+      temperature: 0.2
+      proxy: null
+
+    secondary:
+      name: "Secondary-LLM"
+      base_url: "https://api.openai.com/v1"
+      api_key: "YOUR_SECONDARY_API_KEY"
+      model: "gpt-4o"
+      temperature: 0.2
+      proxy: null
+
+# 3. 三大信源数据库路径 (自动跨库聚合)
+databases:
+  mail_db: "D:/Project/mail_assist/data/mail_assist.db"
+  obsidian_db: "D:/Project/wechat_obsidian/data/inbox.db"
+  social_db: "D:/Project/social_radar/data/social_radar.db"
+  insight_db: "data/insights.db"
+
+# 4. 洞察提炼调度与门槛参数
+engine:
+  lookback_hours: 72                       # 提取过去 N 小时内的跨源增量知识进行深度研读
+  min_insight_score: 80                    # 极高门槛推送阈值 (0-100分，低于 80 分绝对不推送，宁缺毋滥)
+  run_interval_hours: 6                    # 定时聚合渐进思考周期 (默认每 6 小时一次，亦可随时微信发送 /insight 触发)
+  auto_notify_threshold: true              # 仅当提炼出真正深刻的 Insight 时才微信推送
