@@ -43,10 +43,13 @@ class WeChatNotifier:
             logger.error(f"[WeChat] 获取 access_token 异常: {e}")
             raise
 
-    def send_insight_notification(self, insight: ExtractedInsight) -> bool:
-        """格式化推送顶级 Insight 洞察卡片 (同时支持企微富文本与个人微信原生卡片)."""
+    def send_insight_notification(self, insight: ExtractedInsight, insight_id: Optional[int] = None) -> bool:
+        """格式化推送顶级 Insight 洞察卡片 (带 ID 标识与追问提示)."""
+        id_tag = f" [ID: {insight_id}]" if insight_id else ""
+        id_prompt = f"回复 `/llm {insight_id} 您的提问` 或 `/llm 提问`" if insight_id else "回复 `/llm 您的提问`"
+
         # 1. 微信原生卡片内容 (HTML)
-        title = f"💡 深度洞察【{insight.insight_type}】: {insight.title[:35]}"
+        title = f"💡 深度洞察【{insight.insight_type}】{id_tag}: {insight.title[:30]}"
         summary = f"深度得分: 🔥 {insight.depth_score}分 | 跨源碰撞: {len(insight.cross_sources)}个信源"
 
         dirs_str = "、".join(insight.research_directions[:2]) if insight.research_directions else "详见正文分析"
@@ -55,13 +58,14 @@ class WeChatNotifier:
         details = f"<b>💡 核心见解</b>:<br/>{insight.core_insight[:300]}...<br/><br/>" \
                   f"<b>🎯 哲学升华</b>: {insight.philosophical_takeaway}<br/>" \
                   f"<b>🔬 实验推演方向</b>: {dirs_str}<br/>" \
-                  f"<div class=\"gray\">📚 跨源关联: {srcs_str}</div>"
+                  f"<div class=\"gray\">📚 跨源关联: {srcs_str}</div>" \
+                  f"<div class=\"gray\">💬 追问提示: {id_prompt}</div>"
 
         # 2. 企微 Markdown 富文本内容
         dirs_md = "\n".join([f"> - {d}" for d in insight.research_directions])
         srcs_md = "\n".join([f"- {s}" for s in insight.cross_sources])
 
-        md_content = f"""### 💡 深度学术洞察【{insight.insight_type}】
+        md_content = f"""### 💡 深度学术洞察【{insight.insight_type}】{id_tag}
 **命题**: **{insight.title}**
 **深度评分**: 🔥 **{insight.depth_score} 分**
 > **💡 核心见解与突破**:
@@ -74,7 +78,9 @@ class WeChatNotifier:
 {dirs_md}
 
 **📚 触发碰撞的跨源素材**:
-{srcs_md}"""
+{srcs_md}
+
+💬 追问提示: {id_prompt} 展开深度推演"""
 
         return self.send_dual_notification(
             title=title,

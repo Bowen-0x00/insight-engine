@@ -127,19 +127,18 @@ class InsightEngineService:
                 logger.debug(f"[InsightEngine] 类似命题已归档推送过，跳过: {ins.title}")
                 continue
 
+            # 先归档到 SQLite 获取自增 ID
+            insight_id = self.storage.record_insight(ins)
+
             # 检查是否处于免打扰时段
             from .command_receiver import is_in_quiet_hours
             if is_in_quiet_hours(self.quiet_hours):
                 logger.info(f"[InsightEngine] 当前处于夜间免打扰时段 ({self.quiet_hours})，静默归档不发微信推送: {ins.title}")
             else:
-                logger.info(f"[InsightEngine] 发现突破性 Insight [{ins.insight_type}] ({ins.depth_score}分): {ins.title}")
-                ok = self.notifier.send_insight_notification(ins)
+                logger.info(f"[InsightEngine] 发现突破性 Insight [ID:{insight_id}] [{ins.insight_type}] ({ins.depth_score}分): {ins.title}")
+                ok = self.notifier.send_insight_notification(ins, insight_id=insight_id)
                 if ok:
                     sent_count += 1
-            # 归档到 SQLite
-            self.storage.record_insight(ins)
-
-            # 可选：追加到本地 Obsidian 知识库
             self._append_to_obsidian(ins)
 
         logger.info(f"[InsightEngine] 本轮分析完成，成功推送并沉淀 {sent_count} 条顶级洞察！")
