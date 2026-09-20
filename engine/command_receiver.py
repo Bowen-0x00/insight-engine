@@ -69,11 +69,18 @@ class CommandReceiver:
             hours = int(m_interval.group(1))
             return self._cmd_set_interval(hours)
 
-        # 7. 切换大模型通道: /llm primary 或 /llm secondary
-        m_llm = re.match(r'^(?:/llm|llm|切换模型)\s*(\w+)$', cmd, re.IGNORECASE)
-        if m_llm:
-            provider = m_llm.group(1).lower()
-            return self._cmd_switch_llm(provider)
+        # 7. AI深度追问 或 切换通道:
+        # 格式A: /llm primary 或 /llm secondary -> 切换模型通道
+        # 格式B: /llm <追问问题> 或 /llm last <问题> 或 /llm history -> 对当前洞察进行对话追问
+        if cmd.lower().startswith(("/llm", "／llm")):
+            llm_text = cmd[4:].strip() if len(cmd) > 4 else ""
+            parts = llm_text.split(maxsplit=1)
+            first_token = parts[0].strip().lower() if parts else ""
+            if first_token in ("primary", "secondary"):
+                return self._cmd_switch_llm(first_token)
+            else:
+                # 走 AI 对话追问流程
+                return self._cmd_chat_llm(llm_text)
 
         # 5. 更新大模型 API Key: /setkey <key>
         m_key = re.match(r'^(?:/setkey|setkey|设置密钥)\s*(.+)$', cmd, re.IGNORECASE)
@@ -105,6 +112,12 @@ class CommandReceiver:
     def _cmd_help(self) -> str:
         return """🧠 **InsightEngine 交互控制手册**
 ━━━━━━━━━━━━━━━━━━
+🔹 **AI 深度追问与多轮推演**:
+• `/llm <问题>`: 对最新产出的顶级洞察进行多轮深度追问
+• `/llm last <问题>`: 追问最新一条洞察
+• `/llm <ID> <问题>`: 追问指定 ID 洞察 (如 `/llm 51 ...`)
+• `/llm history`: 查看当前选中洞察的概况与已有追问历史
+
 🔹 **核心触发**:
 • `/insight` 或 `提炼`: 立即触发全源深度碰撞与洞察提炼
 • `/status` 或 `状态`: 检查三大信源库、免打扰与各参数
@@ -203,6 +216,116 @@ class CommandReceiver:
         
         self.service.insight_agent.active_provider = provider
         self.service.cfg["llm"]["active_provider"] = provider
+    def _cmd_chat_llm(self, llm_text: str) -> str:
+        """处理针对洞察材料的 /llm 追问命令."""
+        parts = llm_text.split(maxsplit=1)
+        if not parts:
+            return (
+                "💡 **InsightEngine AI 深度追问指南**\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "• `/llm <问题>`: 对最新产出的顶级洞察进行深度追问\n"
+                "• `/llm last <问题>`: 追问最新一条洞察\n"
+                "• `/llm <ID> <问题>`: 追问指定 ID 洞察 (如 `/llm 5 ...`)\n"
+                "• `/llm history`: 查看最新洞察的概况与追问历史\n\n"
+                "💡 切换思考模型请使用: `/llm primary` 或 `/llm secondary`"
+            )
+
+        first_token = parts[0].strip().lower()
+        if first_token in ("last", "latest") or first_token.isdigit() or (len(first_token) >= 8 and first_token.isalnum() and not any('\u4e00' <= char <= '\u9fff' for char in first_token)):
+            target = first_token
+            question = parts[1].strip() if len(parts) > 1 else ""
+        else:
+            target = "last"
+            question = llm_text
+        with self.service.storage._get_connection() as conn:
+            row = None
+            if target in ("last", "latest"):
+                cur = conn.execute("SELECT * FROM archived_insights ORDER BY id DESC LIMIT 1")
+                row = cur.fetchone()
+            elif target.isdigit():
+                cur = conn.execute("SELECT * FROM archived_insights WHERE id = ?", (int(target),))
+                row = cur.fetchone()
+            else:
+                cur = conn.execute("SELECT * FROM archived_insights WHERE title LIKE ? OR core_insight LIKE ? ORDER BY id DESC LIMIT 1", (f"%{target}%", f"%{target}%"))
+                row = cur.fetchone()
+
+        if not row:
+            return f"❌ 未在洞察库中找到相关记录 (查询目标: `{target}`)。\n系统当前可能尚未沉淀出 ≥80 分的顶级洞察，或请发送 `/insight` 立即触发一次提炼！"
+
+        item = dict(row)
+        item_id = item["id"]
+        title = item.get("title", "未命名洞察")
+        score = item.get("depth_score", 0)
+        category = item.get("insight_type", "综合")
+        # 如果只是查看概况或 /llm history
+        if not question or question.lower() == "history":
+            hist = self.service.storage.get_chat_history(item_id) if hasattr(self.service.storage, "get_chat_history") else []
+            return (
+                f"🧠 **当前选中洞察** [ID: {item_id}]\n"
+                f"📌 《{title}》\n"
+                f"🏷️ 领域: {category} | 🔥 深度评分: {score}分\n"
+                f"💡 核心结论: {item.get('core_insight', '')}\n\n"
+                f"💬 已有追问历史: {len(hist)} 条消息。\n"
+                f"您可以发送：`/llm {item_id} 您的具体问题` 进行深度追问。"
+            )
+
+        # 调用大模型执行上下文追问
+        hist = self.service.storage.get_chat_history(item_id) if hasattr(self.service.storage, "get_chat_history") else []
+        
+        context_parts = [
+            f"【洞察标题】: {title}",
+            f"【所属领域】: {category}",
+            f"【深度洞察评分】: {score}分",
+            f"【核心结论】: {item.get('core_insight', '')}",
+            f"【哲学/架构启示】: {item.get('philosophical_takeaway', '')}",
+            f"【跨界创新/思考推演】:\n{item.get('progressive_synthesis', '')}",
+        ]
+        doc_context = "\n".join(context_parts)
+
+        system_prompt = f"""你是一位深度的商业与前沿技术洞察研究助手。
+请基于以下由【InsightEngine】提炼的顶级跨界洞察与推演内容，回答用户的追问。
+
+--- 洞察推演上下文 ---
+{doc_context}
+--- 结束 ---
+
+回答要求：
+1. 严格依据上述推演和结论作答，突出商业壁垒、技术演进或未来范式。
+2. 语言简练，逻辑严密，适合手机微信阅读，控制在 500 字以内。"""
+
+        messages = [{"role": "system", "content": system_prompt}]
+        for h in hist[-6:]:
+            r = h.get("role", "user")
+            c = h.get("content", "")
+            if r in ("user", "assistant") and c:
+                messages.append({"role": r, "content": c})
+        messages.append({"role": "user", "content": question})
+
+        active_p = self.service.insight_agent.active_provider
+        client_tuple = self.service.insight_agent._get_client_for_provider(active_p)
+        if not client_tuple:
+            return f"❌ 通道 `{active_p}` 未配置有效凭据。"
+        client, model, temp, display_name = client_tuple
+
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=800
+            )
+            ans = resp.choices[0].message.content.strip()
+            if hasattr(self.service.storage, "add_chat_message"):
+                self.service.storage.add_chat_message(item_id, "user", "user", question)
+                self.service.storage.add_chat_message(item_id, "user", "assistant", ans)
+            return (
+                f"🤖 **【InsightEngine·深度追问】** [ID: {item_id}]\n"
+                f"📄 《{title}》\n"
+                f"❓ 问: {question}\n\n"
+                f"💡 答:\n{ans}"
+            )
+        except Exception as e:
+            return f"⚠️ 追问回答生成失败: {e}"
         self._save_yaml("config/config.yaml", self.service.cfg)
         
         p_name = self.service.cfg["llm"]["providers"].get(provider, {}).get("name", provider)

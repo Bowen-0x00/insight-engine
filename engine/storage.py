@@ -40,8 +40,19 @@ class InsightStorage:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS insight_chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                insight_id INTEGER NOT NULL,
+                from_user TEXT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_insight_type ON archived_insights(insight_type)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_insight_score ON archived_insights(depth_score)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_insight_chat_id ON insight_chat_history(insight_id)")
             conn.commit()
             logger.debug(f"[Storage] 洞察归档数据库就绪: {self.db_path}")
 
@@ -79,3 +90,24 @@ class InsightStorage:
             last_id = cur.lastrowid
             logger.info(f"[Storage] 成功归档顶级洞察 [ID {last_id}]: {insight.title}")
             return last_id
+    def add_chat_message(self, insight_id: int, from_user: str, role: str, content: str):
+        """记录洞察追问历史."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+            INSERT INTO insight_chat_history (insight_id, from_user, role, content)
+            VALUES (?, ?, ?, ?)
+            """, (insight_id, from_user, role, content))
+            conn.commit()
+
+    def get_chat_history(self, insight_id: int, limit: int = 6) -> List[Dict[str, str]]:
+        """获取指定洞察的追问历史."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+            SELECT role, content FROM insight_chat_history
+            WHERE insight_id = ?
+            ORDER BY id ASC
+            LIMIT ?
+            """, (insight_id, limit))
+            return [{"role": r["role"], "content": r["content"]} for r in cur.fetchall()]
