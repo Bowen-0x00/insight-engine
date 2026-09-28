@@ -111,9 +111,10 @@ python run.py
 | 指令 | 别名 | 功能说明 | 示例 |
 | :--- | :--- | :--- | :--- |
 | **`/insight`** | `提炼` / `思考` | **立即触发全源深度碰撞与洞察提炼** | 发送 `/insight` |
-| **`/status`** | `状态` | 检查大模型主备健康度、三大数据库联通状态 | 发送 `/status` |
-| **`/llm <通道>`** | `切换模型` | **一键热切换大模型通道**（`primary` 或 `secondary`） | 发送 `/llm secondary` |
-| **`/setkey <Key>`**| `设置密钥` | 动态热更新当前大模型通道的 API Key | 发送 `/setkey sk-xxx` |
+| **`/status`** | `状态` | **实时探测**大模型连通性与知乎 Cookie 状态看板 | 发送 `/status` |
+| **`/llm model`** | `模型` | 查看大模型当前主模型与常用候选列表 | 发送 `/llm model` |
+| **`/llm model <模型名>`**| - | **热切换并持久化大模型** (支持连通性预检) | 发送 `/llm model gemini-3.1-pro-preview` |
+| **`/llm <通道>`** | `切换通道` | **一键热切换大模型通道**（`primary` 或 `secondary`） | 发送 `/llm secondary` |
 | **`/testllm`** | `测试模型` | 实时测试大模型连通性与耗时 | 发送 `/testllm` |
 | **`/cookie <Cookie>`**| `更新知乎` | **免登录服务器，直接在微信热更新知乎 Cookie** | 发送 `/cookie _xsrf=...` |
 | **`/score <分数>`** | `阈值` | 调整洞察推送门槛（默认 80 分，宁缺毋滥） | 发送 `/score 85` |

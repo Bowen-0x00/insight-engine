@@ -111,9 +111,10 @@ Send the following commands directly inside the WeChat conversation:
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | **`/insight`** | Immediately triggers a cross-channel synthesis | `/insight` |
-| **`/status`** | Checks health of databases and LLM channels | `/status` |
-| **`/llm <name>`** | Switches active LLM provider (`primary` / `secondary`) | `/llm secondary` |
-| **`/setkey <Key>`**| Updates the active provider's API key | `/setkey sk-xxx` |
+| **`/status`** | Live probe of LLM connectivity & Zhihu Cookie health | `/status` |
+| **`/llm model`** | View active LLM model and recommended candidates | `/llm model` |
+| **`/llm model <Name>`**| Hot-switch active provider's model with connection test | `/llm model gemini-3.1-pro-preview` |
+| **`/llm <channel>`** | Switches active LLM provider (`primary` / `secondary`) | `/llm secondary` |
 | **`/testllm`** | Tests LLM connectivity and latency | `/testllm` |
 | **`/cookie <Cookie>`**| Hot-updates Zhihu crawler cookies from WeChat | `/cookie _xsrf=...` |
 | **`/score <N>`** | Modifies the insight threshold (default 80) | `/score 85` |
