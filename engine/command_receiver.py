@@ -511,8 +511,20 @@ class CommandReceiver:
         return f"✅ **Insight 推送门槛已修改为**: **{score}** 分 (低于此分绝对静默不打扰)。"
 
     def _save_yaml(self, path: str, data: dict):
+        candidate_paths = [
+            path,
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), path),
+            "/root/insight_extractor/config/config.yaml"
+        ]
+        target_path = None
+        for p in candidate_paths:
+            if os.path.exists(p):
+                target_path = p
+                break
+        target_path = target_path or path
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with open(target_path, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, allow_unicode=True, sort_keys=False)
+            logger.info(f"[Controller] 成功持久化保存配置至: {target_path}")
         except Exception as e:
-            logger.error(f"[Controller] 保存配置异常: {e}")
+            logger.error(f"[Controller] 保存配置异常 ({target_path}): {e}")
