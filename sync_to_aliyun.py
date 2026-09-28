@@ -26,6 +26,7 @@ EXCLUDE_PATTERNS = {
     ".pytest_cache",
     ".git",
     "venv",
+    "config.yaml",  # 保护服务器上的真实配置与热更新 Cookie 不被本地模板覆盖
     "data"  # 保护服务器已归档的洞察库不被覆盖
 }
 

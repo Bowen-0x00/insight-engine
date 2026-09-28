@@ -36,7 +36,7 @@ class InsightAgent:
         # 支持主备多 Provider
         self.providers = self.llm_cfg.get("providers", {})
         self.active_provider = self.llm_cfg.get("active_provider", "primary")
-
+        self.last_error: Optional[str] = None
     def _load_philosophy(self, path: str) -> str:
         if not path or not __import__("os").path.exists(path):
             return "体系结构研究核心：区分课题本体与载体，用第一性原理框住物理底线，以算力对冲带宽。"
@@ -54,13 +54,50 @@ class InsightAgent:
             return None
 
         proxy = p_cfg.get("proxy")
-        http_client = httpx.Client(timeout=60.0, proxy=proxy) if proxy else httpx.Client(timeout=60.0)
+        http_client = httpx.Client(timeout=35.0, proxy=proxy) if proxy else httpx.Client(timeout=35.0)
         client = OpenAI(
             base_url=p_cfg.get("base_url"),
             api_key=p_cfg.get("api_key"),
             http_client=http_client
         )
-        return client, p_cfg.get("model", "deepseek-chat"), p_cfg.get("temperature", 0.2), p_cfg.get("name", provider_key)
+        direct_client = OpenAI(
+            base_url=p_cfg.get("base_url"),
+            api_key=p_cfg.get("api_key"),
+            http_client=httpx.Client(timeout=35.0)
+        ) if proxy else client
+        return client, direct_client, p_cfg.get("model", "gemini-3.1-pro-preview"), p_cfg.get("temperature", 0.2), p_cfg.get("name", provider_key)
+
+    def test_model(self, model_name: str, provider_key: Optional[str] = None) -> tuple[bool, str]:
+        """测试指定模型的连通性与时延."""
+        p_key = provider_key or self.active_provider
+        client_tuple = self._get_client_for_provider(p_key)
+        if not client_tuple:
+            return False, f"Provider [{p_key}] 未正确配置 API Key"
+
+        client, direct_client, _, _, p_name = client_tuple
+        import time
+        start_time = time.time()
+        clients = [client]
+        if direct_client and direct_client is not client:
+            clients.append(direct_client)
+
+        last_err = ""
+        for cli in clients:
+            try:
+                resp = cli.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=5,
+                    timeout=8.0
+                )
+                cost = time.time() - start_time
+                if resp.choices and resp.choices[0].message:
+                    return True, f"{cost:.2f}s"
+            except Exception as e:
+                last_err = str(e)
+                continue
+
+        return False, last_err[:120]
 
     def generate_insights(self, knowledge_package: Dict[str, List[SourceKnowledgeItem]]) -> List[ExtractedInsight]:
         """跨源深度碰撞与渐进思考，提炼极高门槛洞察."""
@@ -89,14 +126,23 @@ class InsightAgent:
             if not client_tuple:
                 continue
 
-            client, model_name, temp, p_display = client_tuple
-            try:
-                logger.info(f"[InsightAgent] 正在调用大模型通道: {p_display} ({model_name})...")
-                res = self._call_llm_insight(client, model_name, temp, materials_text)
-                if res:
-                    return res
-            except Exception as e:
-                logger.warning(f"[InsightAgent] 通道 [{p_display}] 调用失败: {e}，尝试切换备用通道...")
+            client, direct_client, model_name, temp, p_display = client_tuple
+            models_to_try = [model_name, "gemini-3.1-pro-preview", "gemini-3.6-flash", "gemini-3.8-flash", "deepseek-chat"]
+            clients_to_try = [client]
+            if direct_client and direct_client is not client:
+                clients_to_try.append(direct_client)
+
+            for cli in clients_to_try:
+                for m in models_to_try:
+                    try:
+                        logger.info(f"[InsightAgent] 正在调用大模型通道: {p_display} ({m})...")
+                        res = self._call_llm_insight(cli, m, temp, materials_text)
+                        if res:
+                            self.last_error = None
+                            return res
+                    except Exception as e:
+                        self.last_error = str(e)
+                        logger.warning(f"[InsightAgent] 通道 [{p_display}] 模型 [{m}] 调用失败: {e}，尝试切换备用...")
 
         logger.error("[InsightAgent] 所有大模型通道均不可用或未生成洞察")
         return []

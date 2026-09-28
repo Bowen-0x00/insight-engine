@@ -119,6 +119,17 @@ class InsightEngineService:
 
         # 2. 大模型提炼洞察
         insights = self.insight_agent.generate_insights(pkg)
+        if getattr(self.insight_agent, "last_error", None):
+            self.notifier.send_alert(
+                alert_key="insight_engine_llm_alert",
+                title="⚠️ 【洞察引擎 - 大模型异常告警】",
+                content=(
+                    f"🤖 当前通道: `{self.insight_agent.active_provider}`\n"
+                    f"❌ 错误详情: {self.insight_agent.last_error}\n\n"
+                    "📌 处理: 本轮洞察提炼未成功生成结果。\n"
+                    "💡 建议: 在微信回复 `/llm model` 检查模型连通性，或回复 `/llm model <新模型>` 切换可用模型！"
+                )
+            )
 
         # 3. 过滤、落盘归档与通知推送
         sent_count = 0

@@ -2,6 +2,8 @@
 
 import pytest
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from engine.insight_agent import ExtractedInsight, InsightAgent
 from engine.storage import InsightStorage
 from engine.command_receiver import CommandReceiver
@@ -44,7 +46,8 @@ def test_command_receiver_parsing():
             self.insight_agent = type("DummyAgent", (), {
                 "active_provider": "primary",
                 "min_score": 80,
-                "_get_client_for_provider": lambda s, p: None
+                "_get_client_for_provider": lambda s, p: None,
+                "test_model": lambda s, m, p=None: (True, "0.2s") if m != "bad-model" else (False, "503 No Channel")
             })()
 
         def run_pipeline(self):
@@ -65,6 +68,14 @@ def test_command_receiver_parsing():
     score_res = receiver.handle_command("/score 85")
     assert "85" in score_res
     assert service.min_insight_score == 85
+
+    # Test /llm model
+    model_view = receiver.handle_command("/llm model")
+    assert "大模型状态看板" in model_view
+
+    # Test /llm model gemini-3.1-pro-preview
+    model_switch = receiver.handle_command("/llm model gemini-3.1-pro-preview")
+    assert "大模型切换成功" in model_switch
 
     # Test /llm secondary
     llm_res = receiver.handle_command("/llm secondary")

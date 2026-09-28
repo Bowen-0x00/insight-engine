@@ -76,11 +76,12 @@ class CommandReceiver:
             llm_text = cmd[4:].strip() if len(cmd) > 4 else ""
             parts = llm_text.split(maxsplit=1)
             first_token = parts[0].strip().lower() if parts else ""
+            if first_token in ("model", "models", "模型"):
+                model_arg = parts[1].strip() if len(parts) > 1 else ""
+                return self._cmd_llm_model(model_arg)
             if first_token in ("primary", "secondary"):
                 return self._cmd_switch_llm(first_token)
-            else:
-                # 走 AI 对话追问流程
-                return self._cmd_chat_llm(llm_text)
+            return self._cmd_chat_llm(llm_text)
 
         # 5. 更新大模型 API Key: /setkey <key>
         m_key = re.match(r'^(?:/setkey|setkey|设置密钥)\s*(.+)$', cmd, re.IGNORECASE)
@@ -132,11 +133,12 @@ class CommandReceiver:
 • `/score <分数>`: 调整洞察推送门槛 (默认 80 分，宁缺毋滥)
 
 🔹 **大模型容灾与热切换 (解决 API 失效)**:
-• `/llm primary`: 切换为默认主通道 (如 Gemini-3.8-Flash)
-• `/llm secondary`: 切换为备用容灾通道 (如 DeepSeek-V3)
+• `/llm model`: 查看大模型连接状态与推荐模型列表
+• `/llm model <模型名称>`: 切换当前大模型 (如 `/llm model gemini-3.1-pro-preview`)
+• `/llm primary`: 切换为默认主通道
+• `/llm secondary`: 切换为备用容灾通道
 • `/setkey <Key>`: 动态热更新当前生效通道的 API Key
 • `/testllm`: 实时测试大模型连通性与响应速度
-
 🔹 **知乎爬虫容错与更新 (解决 Cookie 失效)**:
 • `/cookie <完整Cookie>`: 免登服务器，直接在微信对话框中热更新知乎 Cookie 并测试生效！"""
 
@@ -145,32 +147,68 @@ class CommandReceiver:
         llm_cfg = cfg.get("llm", {})
         active_p = self.service.insight_agent.active_provider
         p_info = llm_cfg.get("providers", {}).get(active_p, {})
+        llm_model = p_info.get("model", "gemini-3.1-pro-preview")
+
+        # 1. 实时探测大模型健康状态
+        llm_ok, llm_cost = self.service.insight_agent.test_model(llm_model, active_p)
+        llm_badge = f"🟢 连通正常 (耗时: {llm_cost})" if llm_ok else f"🔴 异常 ({llm_cost})"
+
+        # 2. 实时探测知乎 Cookie 状态
+        cookie_desc = "⚪ 未配置"
+        import requests
+        for cp in ["D:/Project/social_radar/config/config.yaml", "../social_radar/config/config.yaml", "/root/social_radar/config/config.yaml"]:
+            if os.path.exists(cp):
+                try:
+                    with open(cp, "r", encoding="utf-8") as f:
+                        cand_cfg = yaml.safe_load(f) or {}
+                    c_val = cand_cfg.get("zhihu", {}).get("cookie", "")
+                    if c_val:
+                        headers = {
+                            "accept": "*/*",
+                            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "cookie": c_val
+                        }
+                        r = requests.get("https://www.zhihu.com/api/v4/me?include=is_realname", headers=headers, timeout=5)
+                        if r.status_code == 200:
+                            u_name = r.json().get("name", "")
+                            cookie_desc = f"🟢 正常生效 (账号: {u_name or '已登录'})"
+                        else:
+                            cookie_desc = f"🔴 凭据失效 (HTTP {r.status_code})"
+                        break
+                except Exception as e:
+                    cookie_desc = f"⚠️ 探测超时 ({str(e)[:30]})"
 
         quiet_h = getattr(self.service, "quiet_hours", "23:00-09:00")
         quiet_desc = "休眠静默中 🌙" if is_in_quiet_hours(quiet_h) else "活跃思考中 🟢"
-        days = self.service.lookback_hours // 24
+        lookback = getattr(self.service, "lookback_hours", 72)
+        days = lookback // 24
+        interval = getattr(self.service, "run_interval_hours", 6)
+        min_score = getattr(self.service, "min_insight_score", 80)
 
         # 检查三大数据库
-        mail_exist = os.path.exists(self.service.knowledge_hub.mail_db)
-        obs_exist = os.path.exists(self.service.knowledge_hub.obsidian_db)
-        soc_exist = os.path.exists(self.service.knowledge_hub.social_db)
+        hub = getattr(self.service, "knowledge_hub", None)
+        mail_exist = os.path.exists(hub.mail_db) if hub and hasattr(hub, "mail_db") else False
+        obs_exist = os.path.exists(hub.obsidian_db) if hub and hasattr(hub, "obsidian_db") else False
+        soc_exist = os.path.exists(hub.social_db) if hub and hasattr(hub, "social_db") else False
 
         return f"""📊 **InsightEngine 系统健康与配置看板**
 ━━━━━━━━━━━━━━━━━━
 🟢 **服务状态**: 守护运行中
+🤖 **当前大模型**: `{active_p}` (`{llm_model}`) -> {llm_badge}
+🍪 **知乎抓取凭据**: {cookie_desc}
 🌙 **免打扰时段**: `{quiet_h}` ({quiet_desc})
-📅 **跨源回溯范围**: 最近 **{days}** 天 ({self.service.lookback_hours} 小时)
-⏰ **思考沉淀周期**: 每 **{self.service.run_interval_hours}** 小时全源提炼一次
-🔥 **洞察推送门槛**: ≥ {self.service.min_insight_score} 分 (低于此分绝对静默)
-🤖 **当前大模型**: `{active_p}` ({p_info.get('name', '未配置')})
+📅 **跨源回溯范围**: 最近 **{days}** 天 ({lookback} 小时)
+⏰ **思考沉淀周期**: 每 **{interval}** 小时全源提炼一次
+🔥 **洞察推送门槛**: ≥ {min_score} 分 (低于此分绝对静默)
 
 📚 **三大信源数据库联通情况**:
 - 邮件学术库: {'✅ 正常连接' if mail_exist else '⚠️ 未找到文件'}
 - 微信随手记: {'✅ 正常连接' if obs_exist else '⚠️ 未找到文件'}
 - 社交雷达库: {'✅ 正常连接' if soc_exist else '⚠️ 未找到文件'}
 
-💡 若大模型异常可发 `/llm secondary` 切换通道；若知乎失效可发 `/cookie <新Cookie>` 热替换！"""
-
+💡 提示:
+• 发送 `/llm model` 可切换/测试其他模型
+• 发送 `/cookie <新Cookie>` 可热更知乎凭据"""
     def _cmd_set_quiet_hours(self, val: str) -> str:
         clean_val = val.strip()
         if clean_val.lower() in ("off", "none", "false", "0", "关闭"):
@@ -216,6 +254,10 @@ class CommandReceiver:
         
         self.service.insight_agent.active_provider = provider
         self.service.cfg["llm"]["active_provider"] = provider
+        self._save_yaml("config/config.yaml", self.service.cfg)
+        p_name = self.service.cfg.get("llm", {}).get("providers", {}).get(provider, {}).get("name", provider)
+        logger.info(f"[Controller] 大模型通道已热切换为: {provider} ({p_name})")
+        return f"✅ **大模型通道已成功热切换**\n\n当前活动通道: `{provider}` ({p_name})，后续分析将走该通道。"
     def _cmd_chat_llm(self, llm_text: str) -> str:
         """处理针对洞察材料的 /llm 追问命令."""
         parts = llm_text.split(maxsplit=1)
@@ -326,11 +368,6 @@ class CommandReceiver:
             )
         except Exception as e:
             return f"⚠️ 追问回答生成失败: {e}"
-        self._save_yaml("config/config.yaml", self.service.cfg)
-        
-        p_name = self.service.cfg["llm"]["providers"].get(provider, {}).get("name", provider)
-        logger.info(f"[Controller] 大模型通道已热切换为: {provider} ({p_name})")
-        return f"✅ **大模型通道已成功热切换**\n\n当前活动通道: `{provider}` ({p_name})，后续分析将走该通道。"
 
     def _cmd_set_llm_key(self, new_key: str) -> str:
         if len(new_key) < 10:
@@ -365,25 +402,87 @@ class CommandReceiver:
         except Exception as e:
             cost = time.time() - start
             return f"🔴 **大模型通道异常！**\n\n- 通道: `{active_p}` ({display_name})\n- 耗时: {cost:.2f} 秒\n- 错误: {e}\n\n💡 建议发送 `/llm secondary` 切换到备用通道。"
+    def _cmd_llm_model(self, model_arg: str) -> str:
+        """处理 /llm model 查看状态或切换大模型指令."""
+        active_p = self.service.insight_agent.active_provider
+        p_cfg = self.service.cfg.get("llm", {}).get("providers", {}).get(active_p, {})
+        current_model = p_cfg.get("model", "gemini-3.1-pro-preview")
+
+        if not model_arg or model_arg.lower() in ("status", "check", "list", "状态"):
+            ok, cost_or_err = self.service.insight_agent.test_model(current_model, active_p)
+            status_badge = f"🟢 连通正常 (响应耗时: {cost_or_err})" if ok else f"🔴 异常 ({cost_or_err})"
+
+            return (
+                "🤖 **InsightEngine 大模型状态看板**\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"📌 当前通道: `{active_p}` ({p_cfg.get('name', '默认')})\n"
+                f"🤖 当前模型: `{current_model}`\n"
+                f"⚡ 实时连通性: {status_badge}\n"
+                f"🌐 接口地址: `{p_cfg.get('base_url')}`\n\n"
+                "📋 **常用候选模型**:\n"
+                "• `gemini-3.1-pro-preview` (推荐：稳定、深度好)\n"
+                "• `gemini-3.6-flash`\n"
+                "• `gemini-3.8-flash`\n"
+                "• `deepseek-chat`\n\n"
+                "💡 **切换模型命令**:\n"
+                "发送：`/llm model <模型名称>`\n"
+                "例如：`/llm model gemini-3.1-pro-preview`"
+            )
+
+        target_model = model_arg.strip()
+        logger.info(f"[InsightEngine] 用户请求切换通道 [{active_p}] 模型至: {target_model}")
+
+        ok, cost_or_err = self.service.insight_agent.test_model(target_model, active_p)
+        if ok:
+            old_model = current_model
+            p_cfg["model"] = target_model
+            self._save_yaml("config/config.yaml", self.service.cfg)
+            return (
+                "✅ **大模型切换成功！**\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"📌 通道: `{active_p}`\n"
+                f"🔄 原模型: `{old_model}`\n"
+                f"🤖 新模型: `{target_model}`\n"
+                f"⚡ 连通性测试: 🟢 通过 (耗时: {cost_or_err})\n"
+                "💾 配置文件已持久化保存，后续洞察提炼将自动使用新模型！"
+            )
+        else:
+            return (
+                "⚠️ **模型连通性测试失败！**\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"目标模型: `{target_model}`\n"
+                f"❌ 失败原因: {cost_or_err}\n\n"
+                f"🛡️ 为保障洞察提炼不中断，系统仍保持当前可用模型: `{current_model}`\n"
+                "💡 建议：发送 `/llm model` 查看可用候选模型列表。"
+            )
+
 
     def _cmd_update_zhihu_cookie(self, new_cookie: str) -> str:
         """跨项目热更新知乎 Cookie (同时更新 social_radar 配置)."""
         if len(new_cookie) < 30 or "z_c0" not in new_cookie:
             return "⚠️ Cookie 格式似乎不完整（未包含 z_c0 等关键凭据），请完整复制后重试。"
 
-        # 1. 更新本地 social_radar/config/config.yaml
-        radar_cfg_path = "D:/Project/social_radar/config/config.yaml"
+        # 1. 更新本地与云端各项目的知乎配置
+        targets = [
+            "D:/Project/social_radar/config/config.yaml",
+            "../social_radar/config/config.yaml",
+            "/root/social_radar/config/config.yaml",
+            "D:/Project/wechat_obsidian/config.yaml",
+            "../wechat_obsidian/config.yaml",
+            "/root/wechat_obsidian/config.yaml"
+        ]
         updated_ok = False
-        if os.path.exists(radar_cfg_path):
-            try:
-                with open(radar_cfg_path, "r", encoding="utf-8") as f:
-                    r_cfg = yaml.safe_load(f) or {}
-                r_cfg.setdefault("zhihu", {})["cookie"] = new_cookie
-                with open(radar_cfg_path, "w", encoding="utf-8") as f:
-                    yaml.dump(r_cfg, f, allow_unicode=True, sort_keys=False)
-                updated_ok = True
-            except Exception as e:
-                logger.error(f"[Controller] 更新本地知乎配置异常: {e}")
+        for radar_cfg_path in targets:
+            if os.path.exists(radar_cfg_path):
+                try:
+                    with open(radar_cfg_path, "r", encoding="utf-8") as f:
+                        r_cfg = yaml.safe_load(f) or {}
+                    r_cfg.setdefault("zhihu", {})["cookie"] = new_cookie
+                    with open(radar_cfg_path, "w", encoding="utf-8") as f:
+                        yaml.dump(r_cfg, f, allow_unicode=True, sort_keys=False)
+                    updated_ok = True
+                except Exception as e:
+                    logger.error(f"[Controller] 更新 {radar_cfg_path} 异常: {e}")
 
         # 2. 验证新 Cookie 连通性
         test_url = "https://www.zhihu.com/api/v4/me?include=is_realname"
