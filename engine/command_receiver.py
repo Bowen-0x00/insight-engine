@@ -320,6 +320,8 @@ class CommandReceiver:
             f"【深度洞察评分】: {score}分",
             f"【核心结论】: {item.get('core_insight', '')}",
             f"【哲学/架构启示】: {item.get('philosophical_takeaway', '')}",
+            f"【产生碰撞的跨界原始素材/论文/文章】:\n{item.get('cross_sources', '')}",
+            f"【建议推演方向】:\n{item.get('research_directions', '')}",
             f"【跨界创新/思考推演】:\n{item.get('progressive_synthesis', '')}",
         ]
         doc_context = "\n".join(context_parts)
@@ -347,27 +349,45 @@ class CommandReceiver:
         client_tuple = self.service.insight_agent._get_client_for_provider(active_p)
         if not client_tuple:
             return f"❌ 通道 `{active_p}` 未配置有效凭据。"
-        client, model, temp, display_name = client_tuple
+        client, direct_client, model, temp, display_name = client_tuple
 
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=800
-            )
-            ans = resp.choices[0].message.content.strip()
-            if hasattr(self.service.storage, "add_chat_message"):
-                self.service.storage.add_chat_message(item_id, "user", "user", question)
-                self.service.storage.add_chat_message(item_id, "user", "assistant", ans)
-            return (
-                f"🤖 **【InsightEngine·深度追问】** [ID: {item_id}]\n"
-                f"📄 《{title}》\n"
-                f"❓ 问: {question}\n\n"
-                f"💡 答:\n{ans}"
-            )
-        except Exception as e:
-            return f"⚠️ 追问回答生成失败: {e}"
+        models_to_try = [model, "gemini-3.1-pro-preview", "gemini-3.6-flash", "gemini-3.8-flash", "deepseek-chat"]
+        clients_to_try = [client]
+        if direct_client and direct_client is not client:
+            clients_to_try.append(direct_client)
+
+        ans = None
+        last_e = None
+        for cli in clients_to_try:
+            for m in models_to_try:
+                try:
+                    resp = cli.chat.completions.create(
+                        model=m,
+                        messages=messages,
+                        temperature=0.3,
+                        max_tokens=800
+                    )
+                    ans = resp.choices[0].message.content.strip()
+                    if ans:
+                        break
+                except Exception as e:
+                    last_e = e
+                    continue
+            if ans:
+                break
+
+        if not ans:
+            return f"⚠️ 追问回答生成失败: {last_e}"
+
+        if hasattr(self.service.storage, "add_chat_message"):
+            self.service.storage.add_chat_message(item_id, "user", "user", question)
+            self.service.storage.add_chat_message(item_id, "user", "assistant", ans)
+        return (
+            f"🤖 **【InsightEngine·深度追问】** [ID: {item_id}]\n"
+            f"📄 《{title}》\n"
+            f"❓ 问: {question}\n\n"
+            f"💡 答:\n{ans}"
+        )
 
     def _cmd_set_llm_key(self, new_key: str) -> str:
         if len(new_key) < 10:
@@ -387,7 +407,7 @@ class CommandReceiver:
         if not client_tuple:
             return f"❌ 通道 `{active_p}` 未配置有效凭据。"
 
-        client, model, temp, display_name = client_tuple
+        client, direct_client, model, temp, display_name = client_tuple
         import time
         start = time.time()
         try:

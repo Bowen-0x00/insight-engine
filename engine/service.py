@@ -240,10 +240,23 @@ class InsightEngineService:
                     self.end_headers()
                     self.wfile.write(json.dumps({"code": 0, "reply": reply}, ensure_ascii=False).encode("utf-8"))
                 except Exception as e:
-                    self.send_response(500)
+                    logger.exception(f"[Service] 处理微信指令异常: {e}")
+                    err_msg = f"⚠️ 处理指令异常: {e}"
+                    try:
+                        service_ref.notifier.send_dual_notification(
+                            title="⚙️ 洞察引擎执行异常",
+                            summary="指令执行报错",
+                            details=err_msg,
+                            markdown_content=err_msg,
+                            url="https://work.weixin.qq.com",
+                            btntxt="查看状态"
+                        )
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.end_headers()
-                    self.wfile.write(str(e).encode("utf-8"))
-
+                    self.wfile.write(json.dumps({"code": 500, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
             def log_message(self, format, *args):
                 pass
 

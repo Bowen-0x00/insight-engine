@@ -14,8 +14,20 @@ class InsightStorage:
     """本地 SQLite 数据库管理，用于历史 Insight 归档与防重复提炼."""
 
     def __init__(self, db_path: str = "data/insights.db"):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        if not os.path.isabs(db_path):
+            candidates = [
+                os.path.join("/root/insight_extractor", db_path),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), db_path)
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    self.db_path = c
+                    break
+            else:
+                self.db_path = candidates[1]
+        else:
+            self.db_path = db_path
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
